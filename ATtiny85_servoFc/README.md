@@ -15,3 +15,6 @@ https://desktopstation.net/tmi/ https://desktopstation.net/bb/index.php
 
 This software is released under the MIT License, see LICENSE.txt.
 （このソフトウェアは、MITライセンスのもとで公開されています。LICENSE.txtを見てください）
+
+
+2025/11/3　GS-1502用のサーボモータに合わせたのと、デバックしました。
