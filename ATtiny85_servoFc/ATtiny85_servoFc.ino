@@ -19,8 +19,10 @@
 #include <arduino.h>
 #include "NmraDcc.h"
 #include <avr/eeprom.h>	 //required by notifyCVRead() function if enabled below
+#include "SoftwareSerial.h"
 
 //各種設定、宣言
+//#define SIODBG       // リリース時 コメントアウトすること
 #define DECODER_ADDRESS 3
 #define DCC_ACK_PIN 0   // Atiny85 PB0(5pin) if defined enables the ACK pin functionality. Comment out to disable.
 //                      // Atiny85 DCCin(7pin)
@@ -72,9 +74,16 @@
 NmraDcc	 Dcc;
 DCC_MSG	 Packet;
 
+#if defined(SIODBG)
+  //SerialDBG
+  SoftwareSerial mySerial(O2, O1); // RX, TX
+#endif
+
 //Task Schedule
 unsigned long gPreviousL5 = 0;
-
+#if !defined(SIODBG) //////////////////////////////////////////////////
+unsigned long gPreviousL10 = 0;
+#endif
 //進行方向
 uint8_t gDirection = 128;
 
@@ -136,13 +145,17 @@ CVPair FactoryDefaultCVs [] = {
   {CV_MULTIFUNCTION_EXTENDED_ADDRESS_MSB, 0},          // CV17 XX in the XXYY address
   {CV_MULTIFUNCTION_EXTENDED_ADDRESS_LSB, 0},          // CV18 YY in the XXYY address
   {CV_29_CONFIG, 2},                                   // CV29 Make sure this is 0 or else it will be random based on what is in the eeprom which could caue headaches
-  {CV_zeroDeg ,8},                        // CV60 8で約500us
-  {CV_ninetyDeg ,36},                     // CV61 36で約2400us DM-S0025は36以上に設定すると動きがおかしくなる
+//{CV_zeroDeg ,8},                        // CV60 8で約500us 
+//{CV_ninetyDeg ,36},                     // CV61 36で約2400us DM-S0025は36以上に設定すると動きがおかしくなる
+  {CV_zeroDeg ,13},                        // CV60 13:880uS GS-1502
+  {CV_ninetyDeg ,33},                     // CV61 33:2.14ms GS-1502
   {CV_onDeg ,180},                        // CV62 on時の角度
   {CV_offDeg  ,0},                        // CV63 off時の角度
   {CV_initDeg ,0},                        // CV64 電源切る前の角度
-  {CV_onSpeed, 20},                       // CV65 20で2000msec
-  {CV_offSpeed, 20},                      // CV66 20で2000msec
+//{CV_onSpeed, 20},                       // CV65 20で2000msec
+//{CV_offSpeed, 20},                      // CV66 20で2000msec
+  {CV_onSpeed, 5},                       // CV65 5で500msec
+  {CV_offSpeed, 5},                      // CV66 5で500msec
   {CV_sdir , 0},                          // CV67 0
   {gCV68_servoAdder , 4},                 // CV68 servo Address 4
   {CV_dummy,0},
@@ -179,6 +192,30 @@ void resetCVToDefault()
   }
 };
 
+
+//------------------------------------------------------------------
+// CV Ack
+//------------------------------------------------------------------
+void notifyCVAck(void)
+{
+/*
+#if !defined(SIODBG) //////////////////////////////////////////////////
+  digitalWrite(O1,ON);
+  digitalWrite(O2,ON);
+  digitalWrite(O3,ON);
+  digitalWrite(O4,ON);
+
+  delay( 6 );
+
+  digitalWrite(O1,OFF);
+  digitalWrite(O2,OFF);
+  digitalWrite(O3,OFF);
+  digitalWrite(O4,OFF);
+#endif              //////////////////////////////////////////////////
+*/
+}
+
+
 //------------------------------------------------------------------
 // Arduino固有の関数 setup() :初期設定
 //------------------------------------------------------------------
@@ -193,6 +230,12 @@ void setup()
   pinMode(O4, OUTPUT);
 //digitalWrite(O4 ,HIGH);   // 起動時にサーボが0deg方向に最大まで行かないように
  
+#if defined(SIODBG) //////////////////////////////////////////////////
+  mySerial.begin(9600);
+  mySerial.println("...");
+//mySerial.println("Hello,SFM");
+#endif              //////////////////////////////////////////////////
+
   //DCCの応答用負荷ピン
 #if defined(DCCACKPIN)
   //Setup ACK Pin
@@ -221,7 +264,9 @@ void setup()
 
   //Reset task
   gPreviousL5 = millis();
-
+#if !defined(SIODBG) //////////////////////////////////////////////////
+  gPreviousL10 = gPreviousL5;
+#endif
   //Init CVs
   gCV1_SAddr = Dcc.getCV( CV_MULTIFUNCTION_PRIMARY_ADDRESS ) ;
   gCVx_LAddr = (Dcc.getCV( CV_MULTIFUNCTION_EXTENDED_ADDRESS_MSB ) << 8) + Dcc.getCV( CV_MULTIFUNCTION_EXTENDED_ADDRESS_LSB );
@@ -238,9 +283,23 @@ void setup()
   offSpeed = Dcc.getCV( CV_offSpeed );
   sdir = Dcc.getCV( CV_sdir );
 
+#if defined(SIODBG) //////////////////////////////////////////////////
+// mySerial.println(gCV68_servoAdder,HEX);
+// mySerial.println(zeroDeg,HEX);
+//  mySerial.println(ninetyDeg ,HEX);
+//  mySerial.println(onDeg,HEX);
+//  mySerial.println(offDeg,HEX);
+//  mySerial.println(initDeg,HEX);
+//  mySerial.println(onSpeed,HEX);
+//  mySerial.println(offSpeed,HEX);
+//  mySerial.println(gDir,HEX);
+//  mySerial.println(sdir,HEX);
+//  mySerial.println("###");
+#endif             //////////////////////////////////////////////////
   GTCCR = 1 << PWM1B | 2 << COM1B0;
   TCCR1 = 11 << CS10;
 //  gPreviousL5 = millis();
+
 }
 
 
@@ -254,8 +313,33 @@ void loop() {
     ServoControl();
     gPreviousL5 = millis();
   }
+#if !defined(SIODBG) //////////////////////////////////////////////////
+  if ( (millis() - gPreviousL10) >= 100) // 100:100msec  10:10msec  Function decoder は 10msecにしてみる。
+  {
+    led_control();
+    gPreviousL10 = millis();
+  }
+#endif
 }
 
+void led_control()
+{
+  if(gState_F1 == 0){
+    digitalWrite(O1, OFF);
+  } else {
+    digitalWrite(O1, ON);
+  }
+  if(gState_F2 == 0){
+    digitalWrite(O2, OFF);
+  } else {
+    digitalWrite(O2, ON);
+  }
+  if(gState_F3 == 0){
+    digitalWrite(O3, OFF);
+  } else {
+    digitalWrite(O3, ON);
+  }
+}
 
 //---------------------------------------------------------------------
 // 最終値のアクセサリ番号をCV_sdirに書き込み
@@ -269,7 +353,23 @@ void writeCV()
 //---------------------------------------------------------------------
 void anaWR()
 {
+#if defined(SIODBG) //////////////////////////////////////////////////
+  char foo;
+  foo=map(nowDeg,0,180, zeroDeg, ninetyDeg);
+  analogWrite(O4, foo);
+  mySerial.println(foo,DEC);
+#else
   analogWrite(O4, map(nowDeg,0,180, zeroDeg, ninetyDeg));
+#endif             //////////////////////////////////////////////////
+
+//  mySerial.print("A:");
+//  mySerial.print(nowDeg,DEC);
+//  mySerial.println(foo,DEC);
+//#if !defined(SIODBG) //////////////////////////////////////////////////
+//  analogWrite(O4, map(nowDeg,0,180, zeroDeg, ninetyDeg));
+//  mySerial.print("A:");
+//  mySerial.println((int)(nowDeg*1000),DEC);
+//#endif             //////////////////////////////////////////////////
 }
 
 //---------------------------------------------------------------------
@@ -278,52 +378,73 @@ void anaWR()
 void ServoControl()
 {
   enum{
-      ST_INIT = 0,
-      ST_STANDABY,
-      ST_IDLE,
-      ST_ON,
-      ST_ON_RUN,
-      ST_OFF,
-      ST_OFF_RUN,
+      ST_INIT = 0,  // 0
+      ST_STANDABY,  // 1
+      ST_IDLE,      // 2
+      ST_ON,        // 3
+      ST_ON_RUN,    // 4
+      ST_OFF,       // 5
+      ST_OFF_RUN,   // 6
   };
   
   static char state = ST_INIT;        // ステート
   static float delt_deg = 0;          // 10ms辺りの変化量
   static char updown_flg = 0;         // 0:up 1:down
-  static float nowDeg = 0;
 
-  gState_Function = gState_F0;
+#if defined(SIODBG) /////////////////////////////////////////////////
+  static char prestate = 7;     // debug
+  if(state != prestate ) {
+    mySerial.print("s:");
+    mySerial.println(state,DEC);
+    prestate = state;
+  }
+
+//  static char pregState = 7;     // debug
+//  if(gState_Function != pregState ) {
+//    mySerial.println(gState_Function,HEX);
+//    pregState = gState_Function;
+// }
+#endif             /////////////////////////////////////////////////
 
   switch(state){
-      case ST_INIT:
-        if(Ndas == 1)
-            state = ST_STANDABY;
+      case ST_INIT: //0
+        if(Ndas == 1){                  // DCCコマンドを受信した？
+          if(gState_F4 == sdir ){       // 前回最後のSTR/DIVが同じ？　前回ONの状態でDCC信号が入って来た時に
+            state = ST_STANDABY;        // gState_F4 = 0:OFF で入ってきた時の防護策
+          }
+        }
         break;
-      case ST_STANDABY:               // 起動時一回だけの処理 
-        if(gState_Function == sdir ){            // 前回最後のSTR/DIVが同じ？
-          if(gState_Function == 0){              // 分岐 t DIV ?
+      case ST_STANDABY: //1               // 起動時一回だけの処理
+
+//    mySerial.print("1:");               // 起動時の状態確認用
+//    mySerial.print(gState_F4,DEC);
+//    mySerial.print(":");
+//    mySerial.println(sdir,DEC);
+
+        if(gState_F4 == sdir ){ // 前回最後のSTR/DIVが同じ？
+          if(gState_F4 == 0){   // Servo off?
             nowDeg = offDeg;     
-          } else {                    // 直進 c STR |
+          } else {                    // Servo on
             nowDeg = onDeg;  
           }
           state = ST_IDLE;
           break;
         } else {
-          if(sdir == 1 and gState_Function == 0){
+          if(sdir == 0 and gState_F4 == 0){ // sdir = ON ?
               state = ST_OFF;             
           } else {
             state = ST_ON;
           }
         }
         break;
-      case ST_IDLE: // 1 
-            if(gDir == 0 ){           // Servo O4:OFF
+      case ST_IDLE: // 2 
+            if(gState_F4 == 0 ){           // Servo O4:OFF
               if(nowDeg == offDeg){   // 最終値まで行っていたら抜ける
                 state = ST_IDLE;
                 return;
               }
               state = ST_OFF;
-            } else if(gState_Function == 1 ){    // Servo O4:ON
+            } else if(gState_F4 != 0 ){    // Servo O4:ON 10/11 ==0 -> !=0
               if(nowDeg == onDeg){    // 最終値まで行っていたら抜ける
                 state = ST_IDLE;
                 return;
@@ -332,42 +453,40 @@ void ServoControl()
             }
             break;
 
-      case ST_ON: //11: // ON処理
+      case ST_ON: //3: // ON処理
             if(onDeg - offDeg > 0){  // 上昇か、下降か確認
               updown_flg = UP;       // 上昇
               delt_deg = (float)abs(onDeg - offDeg) / onSpeed / 10; // offDegからonDegまでの移動量を算出
             } else {
               updown_flg = DOWN;       // 下降
               delt_deg = (float)abs(onDeg - offDeg) / offSpeed / 10; // offDegからonDegまでの移動量を算出
-            }
-            
+            }          
             nowDeg = offDeg;        // 現在の角度を導入
             anaWR();
             state = ST_ON_RUN;
             break;
             
-      case ST_ON_RUN: // 12
-              if(updown_flg == UP) {
+      case ST_ON_RUN: // 4
+             if(updown_flg == UP) {
                 nowDeg = nowDeg + delt_deg;       // 上昇
                 if(nowDeg > onDeg){
                   nowDeg = onDeg;
                   anaWR();
+                  gDir = gState_F4;                       // Servo on　になった
                   writeCV();
-//                  digitalWrite(O1, LOW);
-//                  digitalWrite(O2, HIGH);
                   state = ST_IDLE;                  
                 } else {
                   anaWR();          
                   state = ST_ON_RUN;                  
                 }
               } else {
-                nowDeg = nowDeg - delt_deg;       // 下降   
+                nowDeg = nowDeg - delt_deg;       // 下降
+  
                if(nowDeg < onDeg){
                   nowDeg = onDeg;
                   anaWR();
+                  gDir = gState_F4;                       // Servo on　になった
                   writeCV();
-//                  digitalWrite(O1, HIGH);
-//                  digitalWrite(O2, LOW);
                   state = ST_IDLE;   
                 } else {
                   anaWR();              
@@ -376,7 +495,7 @@ void ServoControl()
               }
             break;
 
-      case ST_OFF: //21:  // ON->OFF処理
+      case ST_OFF: //5:  // ON->OFF処理
             if(onDeg - offDeg > 0){  // 上昇か、下降か確認
               updown_flg = DOWN;       // 下昇
               delt_deg = (float)abs(onDeg - offDeg) / offSpeed / 10; // offDegからonDegまでの移動量を算出
@@ -389,15 +508,14 @@ void ServoControl()
             state = ST_OFF_RUN;
             break;
             
-      case ST_OFF_RUN: //22
+      case ST_OFF_RUN: //6
               if(updown_flg == UP) {
                 nowDeg = nowDeg + delt_deg;       // 上昇
                 if(nowDeg > offDeg){
                   nowDeg = offDeg;
                   anaWR();
+                  gDir = gState_F4;                       // Servo off　になった
                   writeCV();
-//                  digitalWrite(O1, LOW);
-//                  digitalWrite(O2, HIGH);
                   state = ST_IDLE;                  
                 } else {
                   anaWR();
@@ -408,9 +526,8 @@ void ServoControl()
                 if(nowDeg < offDeg){
                   nowDeg = offDeg;
                   anaWR();  
+                  gDir = gState_F4;                       // Servo off　になった
                   writeCV();
-//                  digitalWrite(O1, HIGH);
-//                  digitalWrite(O2, LOW);
                   state = ST_IDLE;   
                 } else {
                   anaWR();             
@@ -424,14 +541,15 @@ void ServoControl()
   }   
 }
 
-#if 0
+
+
 //---------------------------------------------------------------------------
 // DCC速度信号の受信によるイベント 
 //---------------------------------------------------------------------------
 extern void notifyDccSpeed( uint16_t Addr, uint8_t Speed, uint8_t ForwardDir, uint8_t MaxSpeed )
 {
 }
-#endif
+
 
 
 //---------------------------------------------------------------------------
@@ -469,7 +587,7 @@ extern void notifyDccFunc(uint16_t Addr, DCC_ADDR_TYPE AddrType, FN_GROUP FuncGr
       gState_F4 = (FuncState & FN_BIT_04);
     }
   }
-
+#if !defined(SIODBG)
   if( FuncGrp == FN_5_8)
   {
     if( gState_F5 != (FuncState & FN_BIT_05))
@@ -510,7 +628,9 @@ extern void notifyDccFunc(uint16_t Addr, DCC_ADDR_TYPE AddrType, FN_GROUP FuncGr
       gState_F12 = (FuncState & FN_BIT_12);
     }
   }
+#endif
 
+#if !defined(SIODBG) //////////////////////////////////////////////////
   switch(gCV68_servoAdder){
     case 0:
             gState_Function = gState_F0;
@@ -553,7 +673,8 @@ extern void notifyDccFunc(uint16_t Addr, DCC_ADDR_TYPE AddrType, FN_GROUP FuncGr
             break;
     default:
             break;
-      
   }
+#endif             /////////////////////////////////////////////////
+
 }
 
